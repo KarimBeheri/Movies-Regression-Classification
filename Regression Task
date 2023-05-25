@@ -1,0 +1,270 @@
+
+import ast
+import json
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import PolynomialFeatures
+
+# Load data
+movie_df = pd.read_csv(r'D:movies-regression-dataset.csv')
+
+# Handle missing values
+# Replace missing homepage and tagline values with the mode
+homepage_mode = movie_df.homepage.mode()[0]
+tagline_mode = movie_df.tagline.mode()[0]
+movie_df['homepage'] = movie_df['homepage'].fillna(homepage_mode)
+movie_df['tagline'] = movie_df['tagline'].fillna(tagline_mode)
+# Drop rows with any other missing values
+movie_df.dropna(inplace=True)
+
+# Handle numerical features with null or zero values
+# Replace 0 values with NaN for budget, revenue and vote_count
+movie_df[['budget', 'revenue', 'vote_count']] = movie_df[['budget', 'revenue', 'vote_count']].replace(0, np.nan)
+# Fill NaN values for budget, revenue and vote_count with their respective mean values
+num_mean = movie_df[['budget', 'revenue', 'vote_count']].mean()
+movie_df[['budget', 'revenue', 'vote_count']] = movie_df[['budget', 'revenue', 'vote_count']].fillna(num_mean)
+
+# Feature Scaling
+# Scale numerical features to a range of 0 to 1 using MinMaxScaler
+scaler = MinMaxScaler()
+num_cols = ['budget', 'viewercount', 'runtime', 'vote_count']
+movie_df[num_cols] = scaler.fit_transform(movie_df[num_cols])
+
+# Convert date to timestamp
+# Convert 'release_date' column to a timestamp format using pd.to_datetime and pd.Timestamp.timestamp
+movie_df.release_date = pd.to_datetime(movie_df.release_date)
+movie_df.release_date = movie_df.release_date.apply(pd.Timestamp.timestamp)
+
+# Convert categorical to numerical
+le = LabelEncoder()
+cat_cols = ['original_language', 'original_title', 'overview', 'status', 'title', 'tagline', 'homepage']
+for col in cat_cols:
+    movie_df[col] = le.fit_transform(movie_df[col])
+
+def explode_column(col, dataset):
+    for c in col:
+        dataset[c] = dataset[c].astype(str).apply(ast.literal_eval)
+    return dataset
+def get_new_features(List, target):
+    result = []
+    for el in List:
+        result.append(el[target])
+    return result  
+# Explode columns and encode
+
+
+cols_to_explode = ['genres', 'keywords', 'production_companies', 'production_countries', 'spoken_languages']
+movie_df = explode_column(cols_to_explode, movie_df)
+
+movie_df.genres = movie_df.genres.apply(lambda lst: get_new_features(lst, 'name'))
+movie_df.keywords = movie_df.keywords.apply(lambda lst: get_new_features(lst, 'name'))
+movie_df.production_companies = movie_df.production_companies.apply(lambda lst: get_new_features(lst, 'name'))
+movie_df['iso_3166_1'] = movie_df.production_countries.apply(lambda lst: get_new_features(lst, 'iso_3166_1'))
+movie_df.production_countries = movie_df.production_countries.apply(lambda lst: get_new_features(lst, 'name'))
+movie_df['iso_639_1'] = movie_df.spoken_languages.apply(lambda lst: get_new_features(lst, 'iso_639_1'))
+movie_df.spoken_languages = movie_df.spoken_languages.apply(lambda lst: get_new_features(lst, 'name'))
+
+
+for col in cols_to_explode + ['iso_3166_1', 'iso_639_1']:
+    movie_df[col] = movie_df[col].apply(lambda x: '|'.join(x))
+    movie_df[col] = le.fit_transform(movie_df[col])
+
+# Split data into features and target
+X = movie_df.drop('vote_average', axis=1) # Features are all columns except for the target column 'vote_average'
+y = movie_df['vote_average'] # Target is the 'vote_average' column
+
+# Create random forest regressor
+rf = RandomForestRegressor(n_estimators=100, random_state=42) # Instantiate a random forest regressor with 100 trees
+# Fit random forest regressor to data
+rf.fit(X, y) # Fit the regressor to the features (X) and target (y)
+
+# Get feature importances
+importances = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False) # Get the feature importances from the trained regressor and sort them in descending order
+# Select top k features
+k = 4 # Select the top 4 features
+selected_features = importances[:k].index.tolist() # Get the names of the top 4 features
+X_selected = movie_df[selected_features] 
+
+
+#print(X_selected)
+
+# Split data into training and validation sets using train_test_split from sklearn
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Train model with all features
+
+# Train a linear regression model with all features and compute the mean squared error on the validation set
+model_all = LinearRegression()
+model_all.fit(X_train, y_train)
+y_pred_all = model_all.predict(X_val)
+MSE_all = mean_squared_error(y_val, y_pred_all)
+
+# Train model with selected features
+
+# Train a linear regression model with selected features and compute the mean squared error on the validation set
+model_selected = LinearRegression()
+model_selected.fit(X_train[selected_features], y_train)
+y_pred_selected = model_selected.predict(X_val[selected_features])
+MSE_selected = mean_squared_error(y_val, y_pred_selected)
+
+# Plot the actual vs. predicted values for the model with all features
+plt.scatter(y_val, y_pred_all)
+plt.plot([y_val.min(), y_val.max()], [y_val.min(), y_val.max()], 'k--', color='red') # Plot the diagonal line
+plt.xlabel('Actual')
+plt.ylabel('Predicted')
+plt.title('Linear Regression Model with All Features')
+plt.show()
+
+# Plot the actual vs. predicted values for the model with selected features
+plt.scatter(y_val, y_pred_selected)
+plt.plot([y_val.min(), y_val.max()], [y_val.min(), y_val.max()], 'k--', color='red') # Plot the diagonal line
+plt.xlabel('Actual')
+plt.ylabel('Predicted')
+plt.title('Linear Regression Model with Selected Features')
+plt.show()
+
+# Output results
+poly = PolynomialFeatures(degree=2)
+X_poly_train = poly.fit_transform(X_train)
+X_poly_val = poly.fit_transform(X_val)
+lr_poly = LinearRegression()
+lr_poly.fit(X_poly_train, y_train)
+y_pred_poly = lr_poly.predict(X_poly_val)
+MSE_poly = mean_squared_error(y_val, y_pred_poly)
+
+
+print("MSE with Linear Model:", MSE_all)
+print("MSE with Linear Model:", MSE_selected)
+print("MSE with Polynomial Model", MSE_poly)
+
+
+# Convert X_val to a numpy array
+X_val_array = X_val.to_numpy()
+
+# Plot the actual vs predicted values of the polynomial regression model
+plt.scatter(X_val_array[:, 0], y_val, color='blue')
+plt.plot(X_val_array[:, 0], y_pred_poly, color='red')
+plt.xlabel('Features')
+plt.ylabel('Votes')
+plt.title('Polynomial Regression')
+plt.show()
+
+######################## BONUS SECTION #############################
+
+actors_df = pd.read_csv(r'D:movies-credit-students-train.csv')
+actors_df = actors_df.drop('crew', axis=1)
+actors_df = actors_df.drop( 'title', axis=1)
+
+def get_actor(x, n):
+    try:
+        cast_list = json.loads(x)
+        if isinstance(cast_list, list) and len(cast_list) > n and isinstance(cast_list[n], dict) and 'name' in cast_list[n]:
+            return cast_list[n]['name']
+    except:
+        pass
+    return np.NaN
+
+actors_df['actor_1_name'] = actors_df['cast'].apply(get_actor, n=0)
+
+ratings_df = movie_df[['id', 'vote_average']].copy()
+ratings_df['id'] = ratings_df['id'].round().astype(int)
+
+ratings_df = ratings_df.rename(columns={'id': 'movie_id'})
+
+#Merge the dataframes on movie ID
+actors_vote_df = pd.merge(actors_df, ratings_df, on='movie_id')
+actors_vote_df.movie_id =actors_df.movie_id
+actors_vote_df.vote_average = movie_df.vote_average
+actors_vote_df.actor_1_name = actors_df.actor_1_name
+ff =actors_vote_df
+
+#Calculate the average rating for each actor in the 'actor_1_name' column
+actor_ratings_df = actors_vote_df.groupby('actor_1_name')['vote_average'].mean().reset_index()
+
+#Sort the actors by average rating in descending order
+popular_actors_df = actor_ratings_df.sort_values(by='vote_average', ascending=False)
+
+#Print the top 10 most popular actors based on average rating
+print(popular_actors_df.head(10))
+
+print("************************************************************")
+print("************************************************************")
+
+#Identify highest rated actors with the highest average rating in the 'actor_1_name' column
+actors_df['actor_1_name'] = actors_df['cast'].apply(get_actor, n=0)
+
+#Sort the actors by average rating in descending order
+popular_actors_df = ff.sort_values(by='vote_average', ascending=False)
+
+#Get the first 10 actors his/her highest film rating
+top_actors_df = popular_actors_df.head(10)
+
+#Print the top 10 actors based on most his/her highest film rating
+top_actors_df= top_actors_df.drop('cast' ,axis=1)
+print(top_actors_df)
+
+print("***********************************************************")
+print("***********************************************************")
+
+#Identify lowest rated actors with the lowest average rating in the 'actor_1_name' column
+actors_df['actor_1_name'] = actors_df['cast'].apply(get_actor, n=0)
+
+#Sort the actors by average rating in ascending order
+popular_actors_df = ff.sort_values(by='vote_average', ascending=True)
+
+#Get the worst 10 actors his/her Lowest film rating
+top_actors_df = popular_actors_df.head(10)
+
+#Print the worst 10 actors based on most his/her Lowest film rating
+top_actors_df= top_actors_df.drop('cast' ,axis=1)
+print(top_actors_df)
+
+
+
+#**************************************************************** pickle
+# Train and save the models
+# ...(training code here)... 
+
+# Save the linear regression model with all features
+import pickle
+
+with open('linear_model.pkl', 'wb') as f:
+    pickle.dump(model_all, f)
+
+# Save the linear regression model with selected features
+with open('linear_model_selected.pkl', 'wb') as f:
+    pickle.dump(model_selected, f)
+
+# Save the polynomial regression model  
+with open('polynomial_model.pkl', 'wb') as f:
+    pickle.dump(lr_poly, f)  
+
+# Load the models and make predictions
+
+
+# Load the models
+with open('linear_model.pkl', 'rb') as f:
+    model_all = pickle.load(f)
+with open('linear_model_selected.pkl', 'rb') as f:
+    model_selected = pickle.load(f) 
+with open('polynomial_model.pkl', 'rb') as f:
+    lr_poly = pickle.load(f)  
+
+# Load new data
+#test_df = pd.read_csv(r'D:movies-regression-dataset.csv')
+#y_pred_all = model_all.predict(test_df)
+#y_pred_selected = model_selected.predict(test_df[selected_features])
+#X_poly_test = poly.fit_transform(test_df)
+#y_pred_poly = lr_poly.predict(X_poly_test)
+
+# Output 
+#print(y_pred_all)
+#print(y_pred_selected) 
+#print(y_pred_poly)
