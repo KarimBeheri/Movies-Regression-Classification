@@ -1,0 +1,180 @@
+import ast
+import json
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler, OneHotEncoder
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.metrics import  accuracy_score
+from sklearn.model_selection import train_test_split
+from sklearn.feature_selection import SelectKBest, chi2
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import train_test_split
+
+def Replace_missing_homepage_and_tagline(x):
+    homepage_mode = x.homepage.mode()[0]
+    tagline_mode = x.tagline.mode()[0]
+    x['homepage'] = x['homepage'].fillna(homepage_mode)
+    x['tagline'] = x['tagline'].fillna(tagline_mode)
+ 
+    
+    x[['budget', 'revenue', 'vote_count', 'runtime']] = x[['budget', 'revenue', 'vote_count', 'runtime']].replace(0, np.nan)
+    num_mean = x[['budget', 'revenue', 'vote_count', 'runtime']].mean()
+    x[['budget', 'revenue', 'vote_count', 'runtime']] = x[['budget', 'revenue', 'vote_count', 'runtime']].fillna(num_mean)
+    
+    x.release_date = pd.to_datetime(x.release_date)
+    x.release_date = x.release_date.apply(pd.Timestamp.timestamp)
+    
+    le = LabelEncoder()
+    cat_cols = ['original_language', 'original_title', 'overview', 'status', 'title', 'tagline', 'homepage']
+    for col in cat_cols:
+        x[col] = le.fit_transform(x[col])
+
+    cols_to_explode = ['genres', 'keywords', 'production_companies', 'production_countries', 'spoken_languages']
+    x = explode_column(cols_to_explode, x)
+    x.genres = x.genres.apply(lambda lst: get_new_features(lst, 'name'))
+    x.keywords = x.keywords.apply(lambda lst: get_new_features(lst, 'name'))
+    x.production_companies = x.production_companies.apply(lambda lst: get_new_features(lst, 'name'))
+    x['iso_3166_1'] = x.production_countries.apply(lambda lst: get_new_features(lst, 'iso_3166_1'))
+    x.production_countries = x.production_countries.apply(lambda lst: get_new_features(lst, 'name'))
+    x['iso_639_1'] = x.spoken_languages.apply(lambda lst: get_new_features(lst, 'iso_639_1'))
+    x.spoken_languages = x.spoken_languages.apply(lambda lst: get_new_features(lst, 'name'))
+    for col in cols_to_explode + ['iso_3166_1', 'iso_639_1']:
+        x[col] = x[col].apply(lambda x: '|'.join(x))
+        x[col] = le.fit_transform(x[col])
+
+    scaler = MinMaxScaler()
+    num_cols = movieData.columns.tolist()
+    num_cols.pop(-1)
+    num_cols.append('iso_3166_1')
+    num_cols.append('iso_639_1')
+    x[num_cols] = scaler.fit_transform(x[num_cols])
+
+def explode_column(col, dataset):
+    for c in col:
+        dataset[c] = dataset[c].astype(str).apply(ast.literal_eval)
+    return dataset
+def get_new_features(List, target):
+    result = []
+    for el in List:
+        
+        result.append(el[target])
+    return result 
+
+
+# Load data
+movieData = pd.read_csv(r'C:\Users\karim\Downloads\movies-classification\movies-classification\movies-classification-dataset.csv')
+
+X_train, X_test, y_train, y_test  = train_test_split(movieData.iloc[:, :-1], movieData.iloc[:, -1], test_size=0.20, shuffle=False)
+
+# Handle missing values
+# Replace missing homepage and tagline values with the mode
+
+
+Replace_missing_homepage_and_tagline(X_train)
+Replace_missing_homepage_and_tagline(X_test)
+
+# Perform feature selection
+selector = SelectKBest(chi2, k=3)  # Select top 100 features based on chi-squared test
+X_train_selected = selector.fit_transform(X_train, y_train)
+X_test_selected = selector.transform(X_test)
+# Encode Labels
+label_encoder = LabelEncoder()
+y_train_encoding = label_encoder.fit_transform(y_train)
+y_test_encoding = label_encoder.fit_transform(y_test)
+
+
+
+#Train and evalute model
+def calculate_accuracy(model, X_train, X_test, y_train, y_test):
+    model.fit(X_train, y_train)
+    predictions = model.predict(X_test)
+    accuracy = accuracy_score(y_test, predictions)
+    return accuracy
+#Create models
+svm = SVC(kernel='poly', degree=4)
+logistic_regression = LogisticRegression(C=0.4)
+knn = KNeighborsClassifier(n_neighbors=10)
+
+svm_accuracy = calculate_accuracy(svm, X_train_selected, X_test_selected, y_train_encoding, y_test_encoding)
+logistic_regression_accuracy = calculate_accuracy(logistic_regression, X_train_selected, X_test_selected, y_train_encoding, y_test_encoding)
+knn_accuracy = calculate_accuracy(knn, X_train_selected, X_test_selected, y_train_encoding, y_test_encoding)
+
+print("SVM Accuracy :" , svm_accuracy)
+print("Logistic Accuracy :" , logistic_regression_accuracy)
+print("KNN Accuracy :" , knn_accuracy)
+
+# Varying SVM hyperparameters
+
+# Create a list of C parameter values to try
+regularization_parameter_values = [0.1, 1, 10]
+
+# Create a list of degree parameter values to try
+degree_parameter_values = [2, 3, 4]
+
+for c in regularization_parameter_values:
+    for degree in degree_parameter_values:
+        svm = SVC(kernel='poly', C=c, degree=degree)
+        svm_accuracy = calculate_accuracy(svm, X_train_selected, X_test_selected, y_train_encoding, y_test_encoding)
+        print("SVM Accuracy (C = {}, degree = {}): {}".format(c, degree, svm_accuracy))
+        
+#########################################################################
+import pickle
+
+# Train and save the logistic regression model
+logistic_regression = LogisticRegression(C=0.4)
+logistic_regression.fit(X_train_selected, y_train_encoding)
+with open('logistic_regression_model.pkl', 'wb') as file:
+    pickle.dump(logistic_regression, file)
+
+# Train and save the KNN model
+knn = KNeighborsClassifier(n_neighbors=10)
+knn.fit(X_train_selected, y_train_encoding)
+with open('knn_model.pkl', 'wb') as file:
+    pickle.dump(knn, file)
+
+# Load the saved logistic regression model and make predictions on a new CSV file
+with open('logistic_regression_model.pkl', 'rb') as file:
+    logistic_regression = pickle.load(file)
+
+# Load the saved KNN model and make predictions on a new CSV file
+with open('knn_model.pkl', 'rb') as file:
+    knn = pickle.load(file)
+
+    
+    # Train and save the SVM model
+svm = SVC(kernel='poly', C=1, degree=3)
+svm.fit(X_train_selected, y_train_encoding)
+with open('svm_model.pkl', 'wb') as file:
+    pickle.dump(svm, file)
+
+# Load the saved SVM model and make predictions on a new CSV file
+with open('svm_model.pkl', 'rb') as file:
+    svm = pickle.load(file)
+
+# Load the new CSV file
+new_data = pd.read_csv(r'C:\Users\karim\Downloads\movies-classification\movies-classification\movies-classification-dataset.csv')
+new_data = new_data.drop('Rate', axis=1)
+
+# Preprocess the new data using the same preprocessing steps as the training data
+Replace_missing_homepage_and_tagline(new_data)
+X_new = selector.transform(new_data)
+
+# Make predictions on the new data using the loaded logistic regression and KNN models
+logistic_regression_pred = logistic_regression.predict(X_new)
+knn_pred = knn.predict(X_new)
+
+# Make predictions on the new data using the loaded SVM model
+y_pred = svm.predict(X_new)
+
+# Print the predictions
+print("SVM predictions: ",y_pred)
+# Print the predictions
+print("Logistic Regression predictions: ", logistic_regression_pred)
+print("KNN predictions: ", knn_pred)
